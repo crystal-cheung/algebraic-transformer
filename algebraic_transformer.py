@@ -1,27 +1,44 @@
+import numpy as np
+import torch
+
+# Define irreducible representations of Z_n
+def zn_irreps(n):
+    G = list(range(n))  # group elements 0,1,...,n-1
+    reps = []
+    for k in range(n):
+        # Each rep is a dict from group element g to 1x1 complex matrix exp(2pi i k g / n)
+        rep = {g: torch.tensor([[np.exp(2j * np.pi * k * g / n)]], dtype=torch.cfloat) for g in G}
+        reps.append(rep)
+    return G, reps
+
+# Define transitions for Z_n: identity map modulo n
+def zn_transitions(n):
+    return {g: g for g in range(n)}
+
+import pdb
 import torch
 import torch.nn as nn
-
 class GroupEmbedding(nn.Module):
     def __init__(self, reps):
         super().__init__()
-        self.reps = reps  # List of representation matrices [rho^{(1)}, ..., rho^{(k)}]
-        self.embedding_dim = sum([r.shape[0] * r.shape[1] for r in reps])
+        self.reps = reps
+        self.embedding_dim = sum([rep[0].numel() for rep in reps])
 
     def forward(self, x):
-        # x is a list of group elements, each maps to representation matrices
-        # Each element is assumed to be a key to look up representation matrices
         batch = []
         for element in x:
-            blocks = [rep[element] for rep in self.reps]  # block matrices
-            blocks_flat = torch.cat([b.flatten() for b in blocks])
-            batch.append(blocks_flat)
+            idx = int(element)  # convert tensor to plain Python int
+            # blocks = [torch.nan_to_num(rep[idx].flatten().real.to(torch.float32)) for rep in self.reps]
+            blocks = [torch.nan_to_num(rep[element].flatten().real.to(torch.float32)) for rep in self.reps]
+            batch.append(torch.cat(blocks))
         return torch.stack(batch)
 
+# --- Transition ---
 class AlgebraicTransition(nn.Module):
     def __init__(self, reps, transitions):
         super().__init__()
-        self.reps = reps  # [rho^{(j)}]
-        self.transitions = transitions  # dict of t_sigma for each symbol sigma
+        self.reps = reps
+        self.transitions = transitions
 
     def forward(self, state_embedding, input_symbols):
         batch_size = len(input_symbols)
@@ -29,27 +46,43 @@ class AlgebraicTransition(nn.Module):
         for i in range(batch_size):
             symbol = input_symbols[i]
             t_sigma = self.transitions[symbol]
+            # t_sigma = self.transitions[symbol]
             blocks = []
             idx = 0
             for rep in self.reps:
                 d = rep[0].shape[0]
-                block = state_embedding[i][idx:idx + d*d].reshape(d, d)
-                block_updated = block @ rep[t_sigma]
+                block = state_embedding[i][idx:idx + d*d].reshape(d, d).to(torch.float32)
+                block = torch.nan_to_num(block)
+                rep_matrix = torch.nan_to_num(rep[t_sigma].real.to(torch.float32))
+                rep_matrix = rep_matrix / (rep_matrix.norm() + 1e-6)
+                block_updated = block @ rep_matrix
+
                 blocks.append(block_updated.flatten())
                 idx += d*d
             new_embeddings.append(torch.cat(blocks))
-        return torch.stack(new_embeddings)
 
+        new_embeddings_tensor = torch.stack(new_embeddings)
+
+        return new_embeddings_tensor
+
+# --- Layer ---
 class AlgebraicTransformerLayer(nn.Module):
     def __init__(self, reps, transitions):
         super().__init__()
         self.transition = AlgebraicTransition(reps, transitions)
-        self.norm = nn.LayerNorm(sum([r[0].shape[0]**2 for r in reps]))
+        embed_dim = sum([r[0].shape[0]**2 for r in reps])
+        self.norm = nn.LayerNorm(embed_dim, eps=1e-3, dtype=torch.float32)
 
     def forward(self, x, input_symbols):
         updated = self.transition(x, input_symbols)
-        return self.norm(updated + x)  # residual connection
+        residual = updated + x
+        residual = residual + 1e-6 * torch.randn_like(residual)
+        out = self.norm(residual)
+        # out = self.norm(updated + x)
 
+        return out
+
+# --- Model ---
 class ScalableAlgebraicTransformer(nn.Module):
     def __init__(self, reps, transitions, depth=3):
         super().__init__()
@@ -57,13 +90,28 @@ class ScalableAlgebraicTransformer(nn.Module):
         self.layers = nn.ModuleList([
             AlgebraicTransformerLayer(reps, transitions) for _ in range(depth)
         ])
+        embed_dim = sum([r[0].shape[0]**2 for r in reps])
+        self.output_proj = nn.Sequential(
+            nn.LayerNorm(embed_dim),
+            nn.Linear(embed_dim, embed_dim),
+            nn.ReLU(),
+            nn.Linear(embed_dim, 1)
+        )
 
-    def forward(self, sequence):
-        # sequence: list of input symbols
-        batch_size = len(sequence)
-        init_state = ['id'] * batch_size  # assume initial state is identity element
+    def forward(self, sequences):
+        batch_size, seq_len = len(sequences), len(sequences[0])
+        # init_state = torch.zeros(batch_size, dtype=torch.long).tolist()
+        # x = self.embedding(init_state).to(torch.float32)
+        # Use the first digit as input to embedding (for diversity)
+        init_state = [seq[0] for seq in sequences]
         x = self.embedding(init_state)
-        for layer in self.layers:
-            x = layer(x, sequence)
-        return x
 
+        for t in range(seq_len):
+            symbols_t = [seq[t] for seq in sequences]
+            for layer in self.layers:
+                x = layer(x, symbols_t)
+
+
+        out = self.output_proj(x).squeeze(-1)
+
+        return out
