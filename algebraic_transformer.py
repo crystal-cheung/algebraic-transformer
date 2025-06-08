@@ -1,5 +1,7 @@
 import numpy as np
 import torch
+import pdb
+import torch.nn as nn
 
 # Define irreducible representations of Z_n
 def zn_irreps(n):
@@ -15,9 +17,7 @@ def zn_irreps(n):
 def zn_transitions(n):
     return {g: g for g in range(n)}
 
-import pdb
-import torch
-import torch.nn as nn
+
 class GroupEmbedding(nn.Module):
     def __init__(self, reps):
         super().__init__()
