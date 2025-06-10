@@ -201,29 +201,42 @@ def train_algebraic_transformer(modular=10, depth=3, num_epochs=100, batch_size=
     print(f"\nModel saved to: {model_save_path}")
     return model, history
 
-def load_algebraic_transformer(model_path):
+def load_algebraic_transformer_if_exists(modular, model_dir="./models"):
     """
-    Load a saved algebraic transformer model.
+    Load algebraic transformer for given modular if it exists.
     
     Args:
-        model_path: Path to the saved model file
+        modular: The modular base
+        model_dir: Directory containing saved models
     
     Returns:
-        model: Loaded model
-        config: Model configuration
+        model: Loaded model or None if not found
+        config: Model configuration or None
     """
-    checkpoint = torch.load(model_path, map_location='cpu')
+    model_path = os.path.join(model_dir, f"algebraic_transformer_z{modular}.pth")
     
-    # Reconstruct model
-    modular = checkpoint['modular']
-    depth = checkpoint['depth']
-    reps = checkpoint['reps']
-    transitions = checkpoint['transitions']
+    if not os.path.exists(model_path):
+        print(f"No pre-trained model found for Z_{modular} at {model_path}")
+        return None, None
     
-    model = ScalableAlgebraicTransformer(reps, transitions, depth=depth)
-    model.load_state_dict(checkpoint['model_state_dict'])
+    try:
+        checkpoint = torch.load(model_path, map_location='cpu')
+        
+        # Reconstruct model
+        depth = checkpoint['depth']
+        reps = checkpoint['reps']
+        transitions = checkpoint['transitions']
+        
+        model = ScalableAlgebraicTransformer(reps, transitions, depth=depth)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        model.eval()
+        
+        print(f"Successfully loaded algebraic transformer for Z_{modular}")
+        return model, checkpoint['model_config']
     
-    return model, checkpoint['model_config']
+    except Exception as e:
+        print(f"Error loading model for Z_{modular}: {e}")
+        return None, None
 
 if __name__ == "__main__":
     # Train the model
@@ -235,6 +248,3 @@ if __name__ == "__main__":
         seq_len=5
     )
     
-    # Example of loading the model
-    # loaded_model, config = load_algebraic_transformer("./models/algebraic_transformer_z10.pth")
-    # print(f"Loaded model with config: {config}")
