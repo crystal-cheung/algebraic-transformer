@@ -1,7 +1,9 @@
 import numpy as np
 import torch
-import pdb
 import torch.nn as nn
+from torch.optim import AdamW
+from torch.nn import BCEWithLogitsLoss
+import os
 
 # Define irreducible representations of Z_n
 def zn_irreps(n):
@@ -17,6 +19,16 @@ def zn_irreps(n):
 def zn_transitions(n):
     return {g: g for g in range(n)}
 
+# Data generation function (you'll need to implement this based on your task)
+def generate_data_balanced(batch_size, seq_len=5, modular=10):
+    """
+    Generate balanced training data for modular arithmetic task.
+    This is a placeholder - replace with your actual data generation logic.
+    """
+    X = torch.randint(0, modular, (batch_size, seq_len))
+    # Example: binary classification based on sum being even/odd
+    y = (X.sum(dim=1) % 2).long()
+    return X, y
 
 class GroupEmbedding(nn.Module):
     def __init__(self, reps):
@@ -28,12 +40,10 @@ class GroupEmbedding(nn.Module):
         batch = []
         for element in x:
             idx = int(element)  # convert tensor to plain Python int
-            # blocks = [torch.nan_to_num(rep[idx].flatten().real.to(torch.float32)) for rep in self.reps]
-            blocks = [torch.nan_to_num(rep[element].flatten().real.to(torch.float32)) for rep in self.reps]
+            blocks = [torch.nan_to_num(rep[idx].flatten().real.to(torch.float32)) for rep in self.reps]
             batch.append(torch.cat(blocks))
         return torch.stack(batch)
 
-# --- Transition ---
 class AlgebraicTransition(nn.Module):
     def __init__(self, reps, transitions):
         super().__init__()
@@ -44,9 +54,8 @@ class AlgebraicTransition(nn.Module):
         batch_size = len(input_symbols)
         new_embeddings = []
         for i in range(batch_size):
-            symbol = input_symbols[i]
+            symbol = int(input_symbols[i])  # Ensure it's an int
             t_sigma = self.transitions[symbol]
-            # t_sigma = self.transitions[symbol]
             blocks = []
             idx = 0
             for rep in self.reps:
@@ -56,16 +65,11 @@ class AlgebraicTransition(nn.Module):
                 rep_matrix = torch.nan_to_num(rep[t_sigma].real.to(torch.float32))
                 rep_matrix = rep_matrix / (rep_matrix.norm() + 1e-6)
                 block_updated = block @ rep_matrix
-
                 blocks.append(block_updated.flatten())
                 idx += d*d
             new_embeddings.append(torch.cat(blocks))
+        return torch.stack(new_embeddings)
 
-        new_embeddings_tensor = torch.stack(new_embeddings)
-
-        return new_embeddings_tensor
-
-# --- Layer ---
 class AlgebraicTransformerLayer(nn.Module):
     def __init__(self, reps, transitions):
         super().__init__()
@@ -78,11 +82,8 @@ class AlgebraicTransformerLayer(nn.Module):
         residual = updated + x
         residual = residual + 1e-6 * torch.randn_like(residual)
         out = self.norm(residual)
-        # out = self.norm(updated + x)
-
         return out
 
-# --- Model ---
 class ScalableAlgebraicTransformer(nn.Module):
     def __init__(self, reps, transitions, depth=3):
         super().__init__()
@@ -100,9 +101,7 @@ class ScalableAlgebraicTransformer(nn.Module):
 
     def forward(self, sequences):
         batch_size, seq_len = len(sequences), len(sequences[0])
-        # init_state = torch.zeros(batch_size, dtype=torch.long).tolist()
-        # x = self.embedding(init_state).to(torch.float32)
-        # Use the first digit as input to embedding (for diversity)
+        # Use the first digit as input to embedding
         init_state = [seq[0] for seq in sequences]
         x = self.embedding(init_state)
 
@@ -111,43 +110,131 @@ class ScalableAlgebraicTransformer(nn.Module):
             for layer in self.layers:
                 x = layer(x, symbols_t)
 
-
         out = self.output_proj(x).squeeze(-1)
-
         return out
 
-
-if __name__ == "__main__":
-    # === Define group representations (replace with actual zn_irreps and zn_transitions) ===
-    # Assume these functions return reps and transitions for ℤ_10
-    G, reps = zn_irreps(10)
-    transitions = zn_transitions(10)
-
-    # === Model Setup ===
-    model = ScalableAlgebraicTransformer(reps, transitions, depth=3)
-    optimizer = AdamW(model.parameters(), lr=3e-4, weight_decay=1e-5)
+def train_algebraic_transformer(modular=10, depth=3, num_epochs=100, batch_size=128, 
+                              seq_len=5, lr=3e-4, weight_decay=1e-5, save_path="./models"):
+    """
+    Train an algebraic transformer for modular arithmetic.
+    
+    Args:
+        modular: The modular base (e.g., 10 for Z_10)
+        depth: Number of transformer layers
+        num_epochs: Number of training epochs
+        batch_size: Training batch size
+        seq_len: Length of input sequences
+        lr: Learning rate
+        weight_decay: Weight decay for optimizer
+        save_path: Directory to save the trained model
+    
+    Returns:
+        model: Trained model
+        training_history: Dictionary with loss and accuracy history
+    """
+    
+    # Create save directory if it doesn't exist
+    os.makedirs(save_path, exist_ok=True)
+    
+    # Setup group representations and transitions
+    G, reps = zn_irreps(modular)
+    transitions = zn_transitions(modular)
+    
+    # Initialize model, optimizer, and loss function
+    model = ScalableAlgebraicTransformer(reps, transitions, depth=depth)
+    optimizer = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     criterion = BCEWithLogitsLoss()
-
-    # === Training Loop ===
-    num_epochs = 100
-    batch_size = 128
-
+    
+    # Training history
+    history = {'loss': [], 'accuracy': []}
+    
+    print(f"Training Algebraic Transformer for Z_{modular}")
+    print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+    
+    # Training loop
     for epoch in range(num_epochs):
-        X, y = generate_data_balanced(batch_size)
+        # Generate training data
+        X, y = generate_data_balanced(batch_size, seq_len, modular)
         input_sequences = X.tolist()
-
+        
         # Forward pass
-        logits = model(input_sequences).squeeze(-1)  # shape: [batch_size]
+        model.train()
+        logits = model(input_sequences).squeeze(-1)
         loss = criterion(logits, y.float())
-
+        
         # Backward pass
         optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
+        
+        # Calculate accuracy
+        with torch.no_grad():
+            predictions = (logits > 0).long()
+            accuracy = (predictions == y).float().mean().item()
+        
+        # Store history
+        history['loss'].append(loss.item())
+        history['accuracy'].append(accuracy)
+        
+        # Print progress
+        if epoch % 10 == 0 or epoch == num_epochs - 1:
+            print(f"Epoch {epoch:3d}/{num_epochs} | Loss: {loss.item():.4f} | Acc: {accuracy:.4f}")
+    
+    # Save the trained model
+    model_save_path = os.path.join(save_path, f"algebraic_transformer_z{modular}.pth")
+    torch.save({
+        'model_state_dict': model.state_dict(),
+        'modular': modular,
+        'depth': depth,
+        'reps': reps,
+        'transitions': transitions,
+        'training_history': history,
+        'model_config': {
+            'modular': modular,
+            'depth': depth,
+            'seq_len': seq_len,
+            'embed_dim': sum([r[0].shape[0]**2 for r in reps])
+        }
+    }, model_save_path)
+    
+    print(f"\nModel saved to: {model_save_path}")
+    return model, history
 
-        # Accuracy
-        acc = ((logits > 0) == y).float().mean().item()
+def load_algebraic_transformer(model_path):
+    """
+    Load a saved algebraic transformer model.
+    
+    Args:
+        model_path: Path to the saved model file
+    
+    Returns:
+        model: Loaded model
+        config: Model configuration
+    """
+    checkpoint = torch.load(model_path, map_location='cpu')
+    
+    # Reconstruct model
+    modular = checkpoint['modular']
+    depth = checkpoint['depth']
+    reps = checkpoint['reps']
+    transitions = checkpoint['transitions']
+    
+    model = ScalableAlgebraicTransformer(reps, transitions, depth=depth)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    
+    return model, checkpoint['model_config']
 
-        if epoch % 5 == 0:
-            print(f"[Epoch {epoch}] Loss: {loss.item():.4f} Acc: {acc:.4f}")
+if __name__ == "__main__":
+    # Train the model
+    model, history = train_algebraic_transformer(
+        modular=10,
+        depth=3,
+        num_epochs=100,
+        batch_size=128,
+        seq_len=5
+    )
+    
+    # Example of loading the model
+    # loaded_model, config = load_algebraic_transformer("./models/algebraic_transformer_z10.pth")
+    # print(f"Loaded model with config: {config}")
