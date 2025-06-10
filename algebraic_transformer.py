@@ -115,3 +115,39 @@ class ScalableAlgebraicTransformer(nn.Module):
         out = self.output_proj(x).squeeze(-1)
 
         return out
+
+
+if __name__ == "__main__":
+    # === Define group representations (replace with actual zn_irreps and zn_transitions) ===
+    # Assume these functions return reps and transitions for ℤ_10
+    G, reps = zn_irreps(10)
+    transitions = zn_transitions(10)
+
+    # === Model Setup ===
+    model = ScalableAlgebraicTransformer(reps, transitions, depth=3)
+    optimizer = AdamW(model.parameters(), lr=3e-4, weight_decay=1e-5)
+    criterion = BCEWithLogitsLoss()
+
+    # === Training Loop ===
+    num_epochs = 100
+    batch_size = 128
+
+    for epoch in range(num_epochs):
+        X, y = generate_data_balanced(batch_size)
+        input_sequences = X.tolist()
+
+        # Forward pass
+        logits = model(input_sequences).squeeze(-1)  # shape: [batch_size]
+        loss = criterion(logits, y.float())
+
+        # Backward pass
+        optimizer.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
+
+        # Accuracy
+        acc = ((logits > 0) == y).float().mean().item()
+
+        if epoch % 5 == 0:
+            print(f"[Epoch {epoch}] Loss: {loss.item():.4f} Acc: {acc:.4f}")
