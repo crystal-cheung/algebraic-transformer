@@ -215,28 +215,63 @@ def load_algebraic_transformer_if_exists(modular, model_dir="./models"):
     """
     model_path = os.path.join(model_dir, f"algebraic_transformer_z{modular}.pth")
     
-    if not os.path.exists(model_path):
+    if os.path.exists(model_path):
+        try:
+            checkpoint = torch.load(model_path, map_location='cpu')
+            
+            # Reconstruct model
+            depth = checkpoint['depth']
+            reps = checkpoint['reps']
+            transitions = checkpoint['transitions']
+            
+            model = ScalableAlgebraicTransformer(reps, transitions, depth=depth)
+            model.load_state_dict(checkpoint['model_state_dict'])
+            model.eval()
+            
+            print(f"Successfully loaded existing algebraic transformer for Z_{modular}")
+            return model, checkpoint['model_config']
+        
+        except Exception as e:
+            print(f"Error loading existing model for Z_{modular}: {e}")
+            print("Training a new model instead...")
+    else:
         print(f"No pre-trained model found for Z_{modular} at {model_path}")
-        return None, None
+        print("Training a new model...")
     
-    try:
-        checkpoint = torch.load(model_path, map_location='cpu')
-        
-        # Reconstruct model
-        depth = checkpoint['depth']
-        reps = checkpoint['reps']
-        transitions = checkpoint['transitions']
-        
-        model = ScalableAlgebraicTransformer(reps, transitions, depth=depth)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        model.eval()
-        
-        print(f"Successfully loaded algebraic transformer for Z_{modular}")
-        return model, checkpoint['model_config']
+    # Train new model if loading failed or model doesn't exist
+    print(f"Training new algebraic transformer for Z_{modular}...")
     
-    except Exception as e:
-        print(f"Error loading model for Z_{modular}: {e}")
-        return None, None
+    # Set default training parameters
+    default_params = {
+        'depth': 3,
+        'num_epochs': 100,
+        'batch_size': 128,
+        'seq_len': 5,
+        'lr': 3e-4,
+        'weight_decay': 1e-5,
+        'save_path': model_dir
+    }
+    
+    # Update with any provided parameters
+    default_params.update(train_kwargs)
+    
+    # Train the model
+    model, history = train_algebraic_transformer(
+        modular=modular,
+        **default_params
+    )
+    
+    # Create config for consistency
+    G, reps = zn_irreps(modular)
+    config = {
+        'modular': modular,
+        'depth': default_params['depth'],
+        'seq_len': default_params['seq_len'],
+        'embed_dim': sum([r[0].shape[0]**2 for r in reps])
+    }
+    
+    print(f"Successfully trained and saved new algebraic transformer for Z_{modular}")
+    return model, config
 
 if __name__ == "__main__":
     # Train the model
