@@ -3,10 +3,6 @@ from datasets import Dataset, DatasetDict, load_dataset
 from huggingface_hub import HfApi
 import os
 
-def is_modular(example):
-    """Filter modular arithmetic problems"""
-    text = example['Problem'].lower()
-    return any(term in text for term in ['mod', 'remainder', 'congru', 'divided by'])
 
 # Define the specific test problems (manually identified)
 TEST_PROBLEMS = {
@@ -20,13 +16,8 @@ def is_test_problem(example):
         year = example.get('Year')
         problem_num = example.get('Problem Number')
         
-        if year in TEST_PROBLEMS:
-            if year == 2025 and problem_num in TEST_PROBLEMS[year]:
+        if year in TEST_PROBLEMS and problem_num in TEST_PROBLEMS[year]:
                 return True
-            else:
-                id = example.get('ID')
-                if 'I' in id and problem_num in TEST_PROBLEMS[year]:
-                    return True
         
         return False
 
@@ -97,7 +88,10 @@ def create_aime_dataset_from_existing():
         # Handle Problem Number field
         if 'Problem Number' in example and example['Problem Number'] is not None:
             try:
-                result['Problem Number'] = int(example['Problem Number'])
+                if '-I-' in example['ID']:
+                    result['Problem Number'] = int(example['Problem Number'])
+                else:
+                    result['Problem Number'] = int(example['Problem Number']) + 15
             except (ValueError, TypeError):
                 result['Problem Number'] = 0
         elif 'id' in example and example['id'] is not None:
