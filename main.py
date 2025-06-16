@@ -6,6 +6,7 @@ from datasets import load_dataset
 import re
 import ast
 from algebraic_transformer import load_algebraic_transformer_if_exists
+import numpy as np
 
 def is_modular(example):
     """Filter modular arithmetic problems"""
@@ -282,20 +283,21 @@ train_df = pd.DataFrame(dataset['train'])
 print(f"Train dataset (1983-2022): {len(train_df)} examples")
 
 test_data = dataset['test']
+test_df = pd.DataFrame(test_data)
 print(f"Test dataset (AIME 2023-2025): {len(test_data)} examples")
 
-# Filter modular problems from training data
+# Filter modular problems from testing data
 modular_problems = []
-for idx, row in train_df.iterrows():
+for idx, row in test_df.iterrows():
     if is_modular(row):
         modular_problems.append(row)
 
-print(f"Found {len(modular_problems)} modular problems in training data")
+print(f"Found {len(modular_problems)} modular problems in testing data")
 
 # Process modular problems
 transformed_results = []
 
-for i, problem in enumerate(modular_problems[:5]):  # Process first 5 for testing
+for i, problem in enumerate(modular_problems):  # Process first 5 for testing
     print(f"\nProcessing problem {i+1}:")
     print(f"Original: {problem['Problem'][:200]}...")
     
